@@ -9,7 +9,10 @@ Small and simple library that implements conservative GC using mimalloc API.
 - Fast allocation. When there is multiple instances of migc heap running in multiple threads this library could get much much faster than BDWGC, in single threaded
   situations it should be pretty fast too since mimalloc is fast in single threaded apps too.
 - Small overhead per allocation: 8 bytes. These 8 bytes is used to store mark,live bit and finalizer pointer (if exists).
-
+# Limitations
+- No threading support. migc_heap type can be used only in thread it was created in.
+- No API for precise marking, I could add such API in the future but I think it will increase allocation overhead by another 8 bytes.
+- Only Mark&Sweep is provided at the moment. There is no advanced GC techniques such as incremental or concurrent marking but sticky generational mark&sweep algorithm could be implemented in the future.
 # Building
 ```sh
 git clone https://github.com/playxe/migc
