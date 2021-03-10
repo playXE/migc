@@ -100,10 +100,14 @@ static bool migc_sweep_block(const mi_heap_t *heap, const mi_heap_area_t *area, 
     }
     else
     {
-        if (hdr->finalizer_fn)
+        if (hdr->rtti)
         {
-            finalizer fin = (finalizer)hdr->finalizer_fn;
-            (fin)(((void *)hdr) + sizeof(mi_gc_header));
+            migc_rtti *rtti = (migc_rtti *)hdr->rtti;
+            if (rtti->free)
+            {
+                finalizer fin = rtti->free;
+                (fin)(((void *)hdr) + sizeof(mi_gc_header));
+            }
         }
         hdr->mark = 0;
         hdr->live = 0;
@@ -137,7 +141,8 @@ static void __attribute__((noinline)) migc_collect_internal(migc_heap *heap)
         mark_conservative(heap, root->from, root->to);
         root = root->next;
     }
-
+    migc_visitor visitor;
+    visitor.heap = heap;
     while (cvector_size(heap->mark_stack))
     {
         mi_gc_header *hdr = cvector_begin(heap->mark_stack)[cvector_size(heap->mark_stack) - 1];
@@ -145,6 +150,14 @@ static void __attribute__((noinline)) migc_collect_internal(migc_heap *heap)
         void *from = ((void *)hdr) + 8;
         void *to = ((void *)hdr) + mi_usable_size(hdr);
         mark_conservative(heap, from, to);
+        if (hdr->rtti)
+        {
+            migc_rtti *rtti = (migc_rtti *)hdr->rtti;
+            if (rtti->visit)
+            {
+                (rtti->visit)(visitor, from);
+            }
+        }
     }
     heap->allocated = 0;
     mi_heap_visit_blocks(heap->mi_heap, 1, migc_sweep_block, heap);
@@ -162,6 +175,22 @@ static void __attribute__((noinline)) migc_collect_internal(migc_heap *heap)
     }
     cvector_free(heap->mark_stack);
 }
+
+void migc_visitor_trace(migc_visitor visitor, void *object)
+{
+    mi_gc_header *hdr = (mi_gc_header *)(object - 8);
+    if (hdr->mark == 0)
+    {
+        hdr->mark = 1;
+        cvector_push_back(visitor.heap->mark_stack, hdr);
+    }
+}
+
+void migc_visitor_trace_conservative(migc_visitor visitor, void *from, void *to)
+{
+    mark_conservative(visitor.heap, from, to);
+}
+
 int migc_collect_if_necessary(migc_heap *heap)
 {
     if (heap->allocated > heap->max_heap_size)
@@ -181,10 +210,14 @@ void migc_free(migc_heap *heap, void *ptr)
 {
     mi_gc_header *hdr = ptr - 8;
     hdr->live = 0;
-    if (hdr->finalizer_fn)
+    if (hdr->rtti)
     {
-        finalizer fin = (finalizer)(size_t)hdr->finalizer_fn;
-        (fin)(ptr);
+        migc_rtti *rtti = (migc_rtti *)hdr->rtti;
+        if (rtti->free)
+        {
+            finalizer fin = rtti->free;
+            (fin)(ptr);
+        }
     }
     mi_free(hdr);
 }
@@ -194,7 +227,7 @@ void *migc_realloc(migc_heap *heap, void *pointer, size_t newSize)
     if (newSize)
     {
         migc_collect_if_necessary(heap);
-        size_t real_size = sizeof(mi_gc_header) + mi_usable_size(newSize);
+        size_t real_size = sizeof(mi_gc_header) + mi_good_size(newSize);
         void *newHdr = mi_heap_realloc(heap->mi_heap, pointer, real_size);
         return newHdr + 8;
     }
@@ -204,7 +237,7 @@ void *migc_realloc(migc_heap *heap, void *pointer, size_t newSize)
         return NULL;
     }
 }
-void *migc_malloc(migc_heap *heap, size_t size)
+void *migc_malloc(migc_heap *heap, size_t size, migc_rtti *rtti)
 {
     migc_collect_if_necessary(heap);
     mi_gc_header *hdr;
@@ -220,13 +253,13 @@ void *migc_malloc(migc_heap *heap, size_t size)
     heap->allocated += real_size;
     hdr->live = 1;
     hdr->mark = 0;
-    hdr->finalizer_fn = 0;
+    hdr->rtti = (uint64_t)(size_t)rtti;
     return ((void *)hdr) + sizeof(mi_gc_header);
 }
 
-void migc_register_finalizer(void *ptr, finalizer fin)
+void migc_attach_rtti(void *ptr, migc_rtti *rtti)
 {
-    ((mi_gc_header *)(ptr - 8))->finalizer_fn = (uint64_t)(size_t)fin;
+    ((mi_gc_header *)(ptr - 8))->rtti = (uint64_t)rtti;
 }
 #include <stdio.h>
 

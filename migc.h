@@ -229,11 +229,19 @@ typedef struct conservative_roots_s
     void *from;
     void *to;
 } conservaive_roots;
+typedef struct migc_visitor_s migc_visitor;
+/// runtime type information that can be used by migc to precisely mark object or invoke finalizer.
+typedef struct
+{
+    void (*free)(void *this);
+    void (*visit)(migc_visitor visitor, void *object);
+} migc_rtti;
+
 typedef struct mi_gc_header_s
 {
     uint64_t live : 1;
     uint64_t mark : 1;
-    uint64_t finalizer_fn : 56;
+    uint64_t rtti : 56;
 } mi_gc_header;
 
 typedef struct migc_heap_s
@@ -253,10 +261,25 @@ typedef struct migc_heap_s
 
 } migc_heap;
 
+typedef struct migc_visitor_s
+{
+    migc_heap *heap;
+} migc_visitor;
+
+/// Possibly mark `object`.
+///
+/// # Safety
+///
+/// `object` must be GC allocated object otherwise this might segfault or lead to UB.
+///
+///
+void migc_visitor_trace(migc_visitor visitor, void *object);
+/// Mark pointer range conservatively.
+void migc_visitor_trace_conservative(migc_visitor visitor, void *from, void *to);
 /// Frees `ptr` and invokes finalizer if it exists.
 void migc_free(migc_heap *heap, void *ptr);
 /// Allocate `size` bytes in GC heap.
-void *migc_malloc(migc_heap *heap, size_t size);
+void *migc_malloc(migc_heap *heap, size_t size, migc_rtti *rtti);
 /// Reallocate `pointer` to `newSize` bytes.
 void *migc_realloc(migc_heap *heap, void *pointer, size_t newSize);
 /// Initialize MIGC heap. `sp` should point to any on-stack variable for scanning for roots and `initial_heap_size` is GC threshold.
@@ -273,12 +296,9 @@ void migc_add_roots(migc_heap *heap, void *from, void *to);
 int migc_delete_roots(migc_heap *heap, void *from, void *to);
 
 typedef void (*finalizer)(void *addr);
-/// Register `finalizer` function for `ptr`. If `ptr` is not alive in next GC cycle then its finalizer will be
-/// invoked, this is highly useful when you have to free memory from some external heap or just close IO handles.
-///
-/// NOTE: FInalization order is not guaranteed, no GC allocation or GC cycles should be performed inside finalizer.
-///
-void migc_register_finalizer(void *ptr, finalizer fin);
+/// Attach RTTI to `ptr`. If RTTI provides `free` function then it will be invoked when object is deallocated.
+/// If `visit` function is provided then this function will be invoked for precise marking of `ptr` internals.
+void migc_attach_rtti(void *ptr, migc_rtti *rtti);
 
 /// Function that can be used to obtain current stack pointer. Internally it does not use any inline assembly but just returns
 /// pointer to local variable.
