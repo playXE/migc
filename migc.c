@@ -1,6 +1,8 @@
 #include "migc.h"
 #include <stdbool.h>
 #include <setjmp.h>
+#include <stdio.h>
+
 void migc_heap_init(migc_heap *heap, void *sp, size_t initial_heap_size)
 {
     heap->sp = sp;
@@ -261,7 +263,7 @@ void migc_attach_rtti(void *ptr, migc_rtti *rtti)
 {
     ((mi_gc_header *)(ptr - 8))->rtti = (uint64_t)rtti;
 }
-#include <stdio.h>
+
 
 static volatile void *SINK = 0;
 void __keep_on_stack(void *var)
